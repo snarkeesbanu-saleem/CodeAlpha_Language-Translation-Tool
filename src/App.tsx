@@ -240,9 +240,20 @@ export default function App() {
         }),
       });
 
+      const contentType = response.headers.get("content-type") || "";
       if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || "Translation engine returned an error status.");
+        if (contentType.includes("application/json")) {
+          const errData = await response.json();
+          throw new Error(errData.error || "Translation engine returned an error status.");
+        } else {
+          const errorHtml = await response.text();
+          throw new Error(`Server error (${response.status}). Please check your GEMINI_API_KEY if the translation fails.`);
+        }
+      }
+
+      if (!contentType.includes("application/json")) {
+        const textResponse = await response.text();
+        throw new Error("Linguistic server is still restarting. Please wait a moment and try again.");
       }
 
       const result: TranslationResult = await response.json();
