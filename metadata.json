@@ -1,0 +1,10 @@
+{
+  "name": "Language Translation Tool",
+  "description": "An advanced, feature-rich translator powered by neural AI featuring multi-theme adaptive backgrounds, custom tones, cultural context insights, interactive grammar breakdowns, text-to-speech pronunciations, translation history, and local favorites library.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
