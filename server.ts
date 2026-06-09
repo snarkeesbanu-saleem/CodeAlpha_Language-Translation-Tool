@@ -9,12 +9,41 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 
+import fs from "fs";
 dotenv.config();
+
+const LOG_FILE = path.join(process.cwd(), "server_debug.log");
+function logDebug(message: string) {
+  const timestamp = new Date().toISOString();
+  const logLine = `[${timestamp}] ${message}\n`;
+  console.log(logLine.trim());
+  try {
+    fs.appendFileSync(LOG_FILE, logLine);
+  } catch (err) {
+    // ignore
+  }
+}
+
+// Clear log on boot
+try {
+  fs.writeFileSync(LOG_FILE, `Server debugging log initialized at ${new Date().toISOString()}\n`);
+} catch (err) {}
+
+logDebug("Starting Express server configuration...");
+// Check which env variables are set (without leaking security values)
+logDebug(`Active Environment: NODE_ENV=${process.env.NODE_ENV}`);
+logDebug(`GEMINI_API_KEY is present: ${!!process.env.GEMINI_API_KEY}`);
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: "5mb" }));
+
+// Request logging middleware
+app.use((req, res, next) => {
+  logDebug(`Request received: ${req.method} ${req.url}`);
+  next();
+});
 
 // Lazy initializer for GoogleGenAI to prevent boot crashes when key isn't provided yet
 let aiClient: GoogleGenAI | null = null;
@@ -38,14 +67,17 @@ function getAiClient() {
 
 // API endpoint for Translation using advanced model
 app.post("/api/translate", async (req, res) => {
+  logDebug(`[ROUTE] POST /api/translate starting. Body: ${JSON.stringify(req.body)}`);
   try {
     const { text, sourceLanguage, targetLanguage, tone } = req.body;
 
     if (!text || !text.trim()) {
+      logDebug("[ROUTE] POST /api/translate Bad Request: No input text");
       return res.status(400).json({ error: "No input text provided." });
     }
 
     const ai = getAiClient();
+    logDebug("[ROUTE] POST /api/translate: Initialized AI client, calling Gemini models...");
 
     const systemInstruction = `You are a high-fidelity, nuance-aware multi-lingual translator. 
 Your task is to translate the user text accurately from the source language to the target language with the specified tone.
@@ -174,9 +206,10 @@ Target Language Specified: "${targetLanguage}"
     }
 
     const resultData = JSON.parse(responseText.trim());
+    logDebug("[ROUTE] POST /api/translate completed successfully with parsed results.");
     return res.json(resultData);
   } catch (error: any) {
-    console.error("Translation server error:", error);
+    logDebug(`[ROUTE ERROR] POST /api/translate failed: ${error.stack || error.message}`);
     return res.status(500).json({
       error: error.message || "An unexpected error occurred during translation.",
     });
@@ -185,26 +218,31 @@ Target Language Specified: "${targetLanguage}"
 
 // Configure Vite or Static Assets based on environment
 async function setupServer() {
+  logDebug(`[SETUP] Configuring Vite & Express routing...`);
   if (process.env.NODE_ENV !== "production") {
+    logDebug("[SETUP] Starting dev server using Vite middleware Mode...");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
+    logDebug("[SETUP] Vite dev middleware loaded successfully.");
   } else {
+    logDebug("[SETUP] Production setting detected. Loading dist static asset mapping...");
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
+    logDebug("[SETUP] Static file mapped.");
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server is running at http://0.0.0.0:${PORT}`);
+    logDebug(`[LISTEN] Server successfully listening at http://0.0.0.0:${PORT}`);
   });
 }
 
 setupServer().catch((err) => {
-  console.error("FATAL: Failed to start the server:", err);
+  logDebug(`[FATAL BOOT ERROR]: ${err.stack || err.message}`);
   process.exit(1);
 });
