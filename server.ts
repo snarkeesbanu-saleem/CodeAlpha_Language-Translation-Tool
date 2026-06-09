@@ -107,98 +107,124 @@ Source Language Specified: "${sourceLanguage || "Auto-Detect"}"
 Target Language Specified: "${targetLanguage}"
 ---`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            translatedText: {
-              type: Type.STRING,
-              description: "The primary translated text in the target language.",
-            },
-            sourceLanguageDetected: {
-              type: Type.STRING,
-              description: "The English name of the detected source language (e.g. Spanish, German).",
-            },
-            pronunciation: {
-              type: Type.STRING,
-              description: "Phonetic spelling, romaji, pinyin or sounding guide of the translated text.",
-            },
-            idioms: {
-              type: Type.ARRAY,
-              description: "Any idioms, slang, or unique grammatical metaphors used in translation.",
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  original: {
-                    type: Type.STRING,
-                    description: "The idiom in the target language (or source language if relevant).",
-                  },
-                  meaning: {
-                    type: Type.STRING,
-                    description: "Literal or directly equivalent meaning of the idiom in English.",
-                  },
-                  culturalCtx: {
-                    type: Type.STRING,
-                    description: "Explanation of why or when this idiom/metaphor is spoken.",
-                  },
+    const modelsToTry = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
+    let lastError: any = null;
+    let response = null;
+
+    const config = {
+      systemInstruction,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          translatedText: {
+            type: Type.STRING,
+            description: "The primary translated text in the target language.",
+          },
+          sourceLanguageDetected: {
+            type: Type.STRING,
+            description: "The English name of the detected source language (e.g. Spanish, German).",
+          },
+          pronunciation: {
+            type: Type.STRING,
+            description: "Phonetic spelling, romaji, pinyin or sounding guide of the translated text.",
+          },
+          idioms: {
+            type: Type.ARRAY,
+            description: "Any idioms, slang, or unique grammatical metaphors used in translation.",
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                original: {
+                  type: Type.STRING,
+                  description: "The idiom in the target language (or source language if relevant).",
                 },
-                required: ["original", "meaning", "culturalCtx"],
-              },
-            },
-            wordBreakdown: {
-              type: Type.ARRAY,
-              description: "A compact dictionary breakdown of 2-4 key words or phrases.",
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  word: {
-                    type: Type.STRING,
-                    description: "The target-language word or phrase analyzed.",
-                  },
-                  partOfSpeech: {
-                    type: Type.STRING,
-                    description: "Noun, Verb, Adjective, Particle, Expression, etc.",
-                  },
-                  meaning: {
-                    type: Type.STRING,
-                    description: "Compact English definition or translation.",
-                  },
+                meaning: {
+                  type: Type.STRING,
+                  description: "Literal or directly equivalent meaning of the idiom in English.",
                 },
-                required: ["word", "partOfSpeech", "meaning"],
-              },
-            },
-            alternatives: {
-              type: Type.ARRAY,
-              description: "Alternative translations in differing tones/contexts.",
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  text: {
-                    type: Type.STRING,
-                    description: "The translated text reflecting the alternative tone.",
-                  },
-                  tone: {
-                    type: Type.STRING,
-                    description: "Name of the alternative tone (e.g. casual, professional, formal).",
-                  },
-                  difference: {
-                    type: Type.STRING,
-                    description: "A 1-sentence descriptor in English of how the vibe holds.",
-                  },
+                culturalCtx: {
+                  type: Type.STRING,
+                  description: "Explanation of why or when this idiom/metaphor is spoken.",
                 },
-                required: ["text", "tone", "difference"],
               },
+              required: ["original", "meaning", "culturalCtx"],
             },
           },
-          required: ["translatedText", "sourceLanguageDetected"],
+          wordBreakdown: {
+            type: Type.ARRAY,
+            description: "A compact dictionary breakdown of 2-4 key words or phrases.",
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                word: {
+                  type: Type.STRING,
+                  description: "The target-language word or phrase analyzed.",
+                },
+                partOfSpeech: {
+                  type: Type.STRING,
+                  description: "Noun, Verb, Adjective, Particle, Expression, etc.",
+                },
+                meaning: {
+                  type: Type.STRING,
+                  description: "Compact English definition or translation.",
+                },
+              },
+              required: ["word", "partOfSpeech", "meaning"],
+            },
+          },
+          alternatives: {
+            type: Type.ARRAY,
+            description: "Alternative translations in differing tones/contexts.",
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                text: {
+                  type: Type.STRING,
+                  description: "The translated text reflecting the alternative tone.",
+                },
+                tone: {
+                  type: Type.STRING,
+                  description: "Name of the alternative tone (e.g. casual, professional, formal).",
+                },
+                difference: {
+                  type: Type.STRING,
+                  description: "A 1-sentence descriptor in English of how the vibe holds.",
+                },
+              },
+              required: ["text", "tone", "difference"],
+            },
+          },
         },
+        required: ["translatedText", "sourceLanguageDetected"],
       },
-    });
+    };
+
+    for (const modelName of modelsToTry) {
+      try {
+        logDebug(`[ROUTE] Calling translate model ${modelName}...`);
+        response = await ai.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config,
+        });
+        logDebug(`[ROUTE] Successfully got response using model: ${modelName}`);
+        break;
+      } catch (err: any) {
+        lastError = err;
+        const errStr = err.message || "";
+        const isTransient = errStr.includes("503") || errStr.includes("UNAVAILABLE") || errStr.includes("ResourceExhausted") || errStr.includes("high demand") || errStr.includes("Overloaded");
+        logDebug(`[ROUTE WARNING] Model ${modelName} call failed: ${errStr}. Transient: ${isTransient}`);
+        if (!isTransient) {
+          // Non-transient error like authentication/limits block immediately
+          break;
+        }
+      }
+    }
+
+    if (!response) {
+      throw lastError || new Error("All translation model options failed.");
+    }
 
     const responseText = response.text;
     if (!responseText) {
@@ -210,8 +236,24 @@ Target Language Specified: "${targetLanguage}"
     return res.json(resultData);
   } catch (error: any) {
     logDebug(`[ROUTE ERROR] POST /api/translate failed: ${error.stack || error.message}`);
+    
+    // Safely parse Google GenAI ApiError message if it contains stringified JSON
+    let cleanMessage = error.message || "An unexpected error occurred during translation.";
+    try {
+      const idx = cleanMessage.indexOf("{");
+      if (idx !== -1) {
+        const jsonPortion = cleanMessage.substring(idx);
+        const parsed = JSON.parse(jsonPortion);
+        if (parsed.error && parsed.error.message) {
+          cleanMessage = parsed.error.message;
+        }
+      }
+    } catch (_) {
+      // safe fallback if JSON parsing fails
+    }
+
     return res.status(500).json({
-      error: error.message || "An unexpected error occurred during translation.",
+      error: cleanMessage,
     });
   }
 });
