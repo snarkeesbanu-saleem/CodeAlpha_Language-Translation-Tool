@@ -204,4 +204,7 @@ async function setupServer() {
   });
 }
 
-setupServer();
+setupServer().catch((err) => {
+  console.error("FATAL: Failed to start the server:", err);
+  process.exit(1);
+});
